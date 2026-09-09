@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Tools Convert PDF to Excel Product Information">
+  <link rel="icon" type="image/png" href="assets/monotaro.png">
+  <title>Convert PDF Tools</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">PDF to Excel</div>
+  <span class="note">Product Information</span>
+</header>
+
+<main class="container">
+  <section class="card">
+    <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Pilih berkas PDF">
+      <div class="upload-icon" aria-hidden="true">↑</div>
+      <h1>Letakkan PDF di sini</h1>
+      <p>atau <label for="fileInput" class="browse">Pilih dari Perangkat</label></p>
+      <small>PDF dengan teks · maksimal 40 MB</small>
+      <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden>
+    </div>
+
+    <div id="status" class="status hidden" role="status" aria-live="polite"></div>
+
+    <div class="progress hidden"><div id="progressBar" class="progress-bar"></div></div>
+
+    <div id="workspace" class="workspace hidden">
+      <div class="filebar">
+        <div>
+          <strong id="fileName">berkas.pdf</strong>
+          <span id="fileMeta"></span>
+        </div>
+        <button id="removeBtn" class="ghost" type="button">Ganti berkas</button>
+      </div>
+
+      <div class="controls">
+        <label>
+          <span>Struktur tabel</span>
+          <select id="tableMode">
+            <!-- <option value="auto">Deteksi otomatis</option> -->
+            <option value="adaptive">Adaptive Detection (Default)</option>
+            <option value="catalog">Styled PDF</option>
+            <option value="ocr-adaptive">OCR Adaptive (PDF Scan (Beta))</option>
+            <!-- <option value="lattice">Ikuti garis border</option> -->
+            <!-- <option value="stream">Ikuti celah spasi</option> -->
+            <!-- <option value="grouped">Price list bertingkat (No / Size / Spec / Price)</option> -->
+          </select>
+        </label>
+        <div id="ocrSettings" class="ocr-settings hidden">
+          <label>
+            <span>Bahasa OCR</span>
+            <select id="ocrLanguage">
+              <option value="eng+ind">English + Indonesia</option>
+              <option value="eng">English</option>
+              <option value="ind">Indonesia</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Resolusi OCR</span>
+            <select id="ocrScale">
+              <option value="2">2× · lebih cepat</option>
+              <option value="3" selected>3× · disarankan</option>
+              <option value="4">4× · lebih akurat, lebih berat</option>
+            </select>
+          </label>
+        </div>
+
+        <label>
+          <span>Baris header</span>
+          <select id="headerMode">
+            <option value="auto">Default</option>
+            <option value="first">Baris pertama</option>
+            <option value="none">Tidak ada header</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Sel yang digabung</span>
+          <select id="mergeMode">
+            <option value="keep">Biarkan kosong</option>
+            <option value="fill">Salin nilai ke bawah</option>
+            <option value="merge">Gabungkan di Excel</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Teks yang terpotong</span>
+          <select id="joinWrapped">
+            <option value="on">Sambung jadi satu baris</option>
+            <option value="off">Pisah per baris</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Format angka</span>
+          <select id="numberLocale">
+            <option value="auto">Default</option>
+            <option value="id">Number</option>
+            <option value="off">Biarkan sebagai teks</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Halaman</span>
+          <input id="pageRange" type="text" inputmode="numeric" placeholder="semua" aria-describedby="pageHint">
+        </label>
+      </div>
+
+      <p id="pageHint" class="hint">Kosongkan untuk semua halaman, atau tulis seperti <code>1-4, 9, 12-</code>.</p>
+
+      <button id="extractBtn" class="primary" type="button">Preview</button>
+
+      <div id="previewWrap" class="preview-wrap hidden">
+        <div class="preview-head">
+          <div>
+            <h2>Preview</h2>
+            <span id="rowCount"></span>
+          </div>
+          <div class="actions">
+            <button id="downloadBtn" class="primary small" type="button">Unduh Excel</button>
+          </div>
+        </div>
+
+        <div class="table-scroll">
+          <table id="previewTable"></table>
+        </div>
+
+        <p class="hint">Sel bertanda latar berbeda berarti nilainya disalin dari baris di atasnya.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>PDF ke Excel · Beta v3.1</footer>
+
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js"></script>
+<script type="module" src="assets/app.js"></script>
+</body>
+</html>
