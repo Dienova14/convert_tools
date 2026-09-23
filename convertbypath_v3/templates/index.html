@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Convert by Path</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <header>
+    <h1>Convert by Path</h1>
+    <button onclick="document.getElementById('file').click()">Import PDF</button>
+    <input id="file" type="file" accept="application/pdf,.pdf" hidden>
+    <button class="secondary" onclick="savePaths()">Save Paths</button>
+    <button class="secondary" onclick="loadPaths()">Import Paths</button>
+    <button id="generateBtn" class="secondary" onclick="generatePaths()" disabled>Generate Paths</button>
+    <button id="extractBtn" onclick="extract()" disabled>Extract</button>
+    <button id="deleteAllPathsBtn" type="button">Hapus All Path</button>
+  </header>
+
+  <main>
+    <aside>
+      <div class="pages" id="pages"></div>
+    </aside>
+
+    <section class="viewer">
+      <div class="stage" id="stage">
+        <img id="pageImg">
+        <canvas id="canvas"></canvas>
+      </div>
+    </section>
+
+    <aside class="right">
+      <div class="section">
+        <h3>Type</h3>
+        <div class="tools" id="tools">
+          <button data-type="text">Text</button>
+          <button data-type="image">Image</button>
+          <button data-type="image_text">Image + Text</button>
+          <!-- <button data-type="auto">Auto</button> -->
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Gabung atau Pisah</h3>
+        <select id="textMode">
+          <option value="merge">Gabung</option>
+          <option value="split">Pisah</option>
+        </select>
+      </div>
+
+      <div class="section">
+        <h3>Paths</h3>
+        <div id="pathList" class="empty">Tidak ada Path yang dipilih</div>
+      </div>
+
+      <div class="section path-editor">
+        <h3>Atur Path</h3>
+        <label class="type-editor-label" for="pathType">Type Path</label>
+        <select id="pathType" class="path-type" onchange="changeSelectedType(this.value)" disabled>
+          <option value="text">Text</option>
+          <option value="image">Image</option>
+          <option value="image_text">Image + Text</option>
+        </select>
+      </div>
+
+      <div class="section">
+        <button class="danger" onclick="deleteSelected()">Hapus Path</button>
+      </div>
+    </aside>
+  </main>
+
+  <div class="status" id="status">Open a PDF to start.</div>
+
+  <div class="modal" id="modal">
+    <div class="modalbox">
+      <h3>Extract Data Selesai</h3>
+      <pre id="result"></pre>
+      <button onclick="closeModal()">Tutup</button>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

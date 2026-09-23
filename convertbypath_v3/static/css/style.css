@@ -1,0 +1,304 @@
+*{box-sizing:border-box}
+
+body{
+  margin:0;
+  font-family:Inter,Arial,sans-serif;
+  background:#f4f5f7;
+  color:#1f2328;
+  height:100vh;
+  overflow:hidden;
+}
+
+header{
+  height:58px;
+  background:#ffffff;
+  border-bottom:1px solid #e2e4e9;
+  display:flex;
+  align-items:center;
+  padding:0 16px;
+  gap:12px;
+  box-shadow:0 1px 2px rgba(0,0,0,.04);
+}
+header h1{
+  font-size:17px;
+  margin:0 18px 0 0;
+  font-weight:700;
+  color:#111417;
+}
+
+button,.btn{
+  background:#1f2328;
+  color:#ffffff;
+  border:0;
+  border-radius:7px;
+  padding:9px 13px;
+  cursor:pointer;
+  font-weight:600;
+  transition:background .15s ease, opacity .15s ease;
+}
+button:hover{background:#000000}
+button.secondary{
+  background:#ffffff;
+  color:#1f2328;
+  border:1px solid #d1d5db;
+}
+button.secondary:hover{background:#f0f1f3}
+button.danger{
+  background:#ffffff;
+  color:#b3261e;
+  border:1px solid #e3b3b0;
+}
+button.danger:hover{background:#fbeceb}
+button:disabled{opacity:.4;cursor:not-allowed}
+
+main{
+  display:grid;
+  grid-template-columns:230px 1fr 300px;
+  height:calc(100vh - 58px);
+}
+
+aside,.right{
+  background:#ffffff;
+  border-right:1px solid #e2e4e9;
+  overflow:auto;
+}
+.right{
+  border-left:1px solid #e2e4e9;
+  border-right:0;
+  padding:14px;
+}
+
+.pages{padding:10px}
+.thumb{
+  background:#fafafb;
+  border:1px solid #dde1e6;
+  border-radius:7px;
+  margin-bottom:9px;
+  padding:6px;
+  cursor:pointer;
+  transition:border-color .15s ease;
+}
+.thumb:hover{border-color:#9aa1ac}
+.thumb.active{border-color:#1f2328;box-shadow:0 0 0 1px #1f2328}
+.thumb img{width:100%;display:block;border-radius:3px}
+.thumb div{font-size:12px;text-align:center;margin-top:4px;color:#6b7280}
+
+.viewer{
+  overflow:auto;
+  background:#eceef1;
+  position:relative;
+  padding:22px;
+}
+.stage{
+  position:relative;
+  margin:0 auto;
+  width:max-content;
+  box-shadow:0 8px 30px rgba(0,0,0,.12);
+  border-radius:4px;
+  overflow:hidden;
+  background:#fff;
+}
+.stage img{display:block;max-width:min(80vw,1000px);height:auto}
+.stage canvas{position:absolute;left:0;top:0;cursor:crosshair}
+
+.hint{
+  font-size:12px;
+  color:#6b7280;
+  line-height:1.45;
+  margin-bottom:14px;
+}
+
+.section{margin-bottom:18px}
+.section h3{
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+  margin:0 0 9px;
+  color:#6b7280;
+  font-weight:700;
+}
+
+.tools{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+.tools button{
+  background:#ffffff;
+  color:#1f2328;
+  border:1px solid #d1d5db;
+}
+.tools button:hover{background:#f0f1f3}
+.tools button.selected{
+  outline:none;
+  background:#1f2328;
+  color:#ffffff;
+  border-color:#1f2328;
+}
+
+#textMode{
+  width:100%;
+  background:#ffffff;
+  color:#1f2328;
+  border:1px solid #d1d5db;
+  border-radius:7px;
+  padding:9px;
+}
+
+/* ---- Path list: sebelumnya class ini tidak dipakai oleh JS
+   (JS membuat .path-item / .path-name / .path-meta),
+   sehingga list Path jatuh ke style default & terlihat rapat. ---- */
+.path-items{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  max-height:38vh;
+  overflow:auto;
+  padding-right:2px;
+}
+.path-item{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:5px;
+  width:100%;
+  text-align:left;
+  padding:11px 13px;
+  border:1px solid #dde1e6;
+  border-radius:8px;
+  background:#fafafb;
+  cursor:pointer;
+  font:inherit;
+  color:inherit;
+  transition:border-color .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.path-item:hover{border-color:#9aa1ac;background:#f4f5f7}
+.path-item.selected{
+  border-color:#1f2328;
+  box-shadow:0 0 0 1px #1f2328;
+  background:#ffffff;
+}
+.path-name{
+  font-size:13px;
+  font-weight:700;
+  color:#1f2328;
+}
+.path-meta{
+  font-size:11.5px;
+  color:#6b7280;
+  text-transform:capitalize;
+}
+
+.empty{color:#9aa1ac;font-size:12px;padding:6px 2px}
+
+.status{
+  position:fixed;
+  left:245px;
+  bottom:10px;
+  background:#ffffffee;
+  border:1px solid #dde1e6;
+  padding:8px 12px;
+  border-radius:7px;
+  font-size:12px;
+  color:#374151;
+  box-shadow:0 2px 8px rgba(0,0,0,.06);
+}
+
+.modal{
+  position:fixed;
+  inset:0;
+  background:rgba(17,20,23,.45);
+  display:none;
+  align-items:center;
+  justify-content:center;
+}
+.modal.show{display:flex}
+.modalbox{
+  background:#ffffff;
+  border:1px solid #e2e4e9;
+  border-radius:10px;
+  padding:20px;
+  width:min(520px,90vw);
+  box-shadow:0 20px 50px rgba(0,0,0,.2);
+}
+
+pre{
+  white-space:pre-wrap;
+  max-height:55vh;
+  overflow:auto;
+  font-size:12px;
+  background:#f4f5f7;
+  border:1px solid #e2e4e9;
+  padding:10px;
+  border-radius:7px;
+  color:#1f2328;
+}
+
+.path-editor{
+  border-top:1px solid #e2e4e9;
+  padding-top:14px;
+}
+.edit-note{
+  font-size:11px;
+  line-height:1.45;
+  color:#6b7280;
+  margin:-2px 0 10px;
+}
+.edit-grid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+}
+.edit-grid label{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  font-size:11px;
+  color:#6b7280;
+  font-weight:600;
+}
+.edit-grid input{
+  width:100%;
+  min-width:0;
+  padding:8px 7px;
+  border:1px solid #d1d5db;
+  border-radius:6px;
+  background:#fff;
+  color:#1f2328;
+  font:inherit;
+  font-size:12px;
+}
+.edit-grid input:focus{
+  outline:none;
+  border-color:#1f2328;
+  box-shadow:0 0 0 2px rgba(31,35,40,.08);
+}
+.edit-grid input:disabled{
+  background:#f4f5f7;
+  color:#9aa1ac;
+  cursor:not-allowed;
+}
+.apply-path{
+  width:100%;
+  margin-top:9px;
+}
+.drag-guide{display:flex;align-items:center;gap:9px;padding:9px 10px;background:#f7f8fa;border:1px solid #e2e4e9;border-radius:7px;font-size:11px;color:#374151}
+.drag-guide small{display:block;color:#6b7280;margin-top:2px;line-height:1.35}
+.guide-box{width:30px;height:22px;border:2px solid #2563eb;border-radius:3px;display:block;position:relative;flex:0 0 auto}
+.guide-box:after{content:'';position:absolute;width:6px;height:6px;background:#fff;border:1px solid #2563eb;right:-4px;bottom:-4px;border-radius:1px}
+
+.type-editor-label{
+  display:block;
+  font-size:11px;
+  color:#6b7280;
+  font-weight:600;
+  margin:0 0 5px;
+}
+.path-type{
+  width:100%;
+  background:#fff;
+  color:#1f2328;
+  border:1px solid #d1d5db;
+  border-radius:7px;
+  padding:9px;
+  font:inherit;
+  font-size:12px;
+  margin-bottom:10px;
+}
+.path-type:disabled{opacity:.5;cursor:not-allowed}
