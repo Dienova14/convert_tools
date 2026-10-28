@@ -37,8 +37,6 @@ export function clusterTextLines(words) {
       const minHeight = Math.min(lineHeight, wordHeight) || 1;
       const avgHeight = (lineHeight + wordHeight) / 2;
 
-      // Evaluasi overlap vertikal DAN jarak titik tengah (Center-Y).
-      // Ini mencegah kata di baris berikutnya tersedot ketika spasi vertikal rapat.
       const hasOverlap = shared / minHeight >= 0.45;
       const tightCenterY = Math.abs(wordCenterY - lineCenterY) <= avgHeight * 0.38;
 
@@ -50,7 +48,6 @@ export function clusterTextLines(words) {
 
     if (target) {
       target.words.push(word);
-      // Batasi pemuaian bounding box agar tidak menjalar ke baris berikutnya
       target.top = Math.min(target.top, word.top);
       target.bottom = Math.max(target.bottom, word.bottom);
     } else {
@@ -90,7 +87,6 @@ export function detectColumnBoundaries(lines, options = {}) {
   });
 
   const reference = bodyLines.length >= 2 ? bodyLines : usable;
-
   const bins = Math.max(8, Math.ceil(width));
   const counts = new Float32Array(bins + 1);
   const scale = bins / width;
@@ -116,9 +112,7 @@ export function detectColumnBoundaries(lines, options = {}) {
 
   for (let i = 0; i <= bins; i++) {
     const isGap = counts[i] <= maxCrossing;
-
     if (isGap && start === null) start = i;
-
     if (!isGap && start !== null) {
       gutters.push([start, i - 1]);
       start = null;
@@ -131,15 +125,12 @@ export function detectColumnBoundaries(lines, options = {}) {
   for (const [a, b] of gutters) {
     const x0 = left + a / scale;
     const x1 = left + b / scale;
-
     if (x0 <= left + 0.5 || x1 >= right - 0.5) continue;
     if (x1 - x0 < minGutter) continue;
-
     boundaries.push((x0 + x1) / 2);
   }
 
   if (!boundaries.length) return null;
-
   return [left - 1, ...boundaries, right + 1];
 }
 
@@ -173,7 +164,6 @@ export function assignToColumns(words, columns) {
   for (const word of words) {
     const wordWidth = Math.max(0.5, word.x1 - word.x0);
 
-    // Dinaikkan ke 42% agar teks yang menyentuh batas kolom tidak langsung memicu merge kolom horizontal
     const hits = columns
       .map((column, index) => ({ index, shared: overlap(column.x0, column.x1, word.x0, word.x1) }))
       .filter(hit => hit.shared >= wordWidth * 0.42);
@@ -1270,9 +1260,16 @@ function findGrid(pageContent, fontSize) {
   const minVertical = fontSize * 1.2;
   const minHorizontal = fontSize * 2;
 
+  // PENGUBAHAN: Kenal pasti garisan menegak yang sah dahulu bagi mengelakkan 
+  // pengambilan garisan mendatar jauh di luar jadual (misalnya garisan hiasan di bawah logo/kop).
+  const validVerticals = rulings.vertical.filter(v => v.y1 - v.y0 >= minVertical);
+  const minVerticalTop = validVerticals.length > 0 ? Math.min(...validVerticals.map(v => v.y0)) : 0;
+
   const horizontalCandidates = rulings.horizontal.filter(
-    line => line.x1 - line.x0 >= minHorizontal
+    line => line.x1 - line.x0 >= minHorizontal && 
+            (validVerticals.length === 0 || line.y >= minVerticalTop - 10)
   );
+
   if (horizontalCandidates.length < 3) return null;
 
   const rowLines = cluster1D(horizontalCandidates.map(l => l.y), 3);
@@ -1462,7 +1459,6 @@ export function detectNumericRowAnchors(pageContent, columns = null, header = nu
     -1
   );
 
-  // Dilonggarkan agar baris terakhir tabel tidak terpotong sebagai footer
   if (lastStrongIndex >= 0 && Number.isFinite(typicalAnchorGap) && typicalAnchorGap > 0) {
     const lastStrong = candidates[lastStrongIndex];
     const cutoff = bodyRows.find(row => {
@@ -1613,6 +1609,22 @@ function buildAdaptiveRowGapRows(pageContent, layout) {
 export function buildRows(pageContent, layout, options = {}) {
   if (layout.mode === "none" || !layout.columns) return [];
 
+  // PENGUBAHAN: Saring keluar semua teks dan kata yang letaknya secara vertikal 
+  // di atas jadual (seperti Kop Surat, Logo, dan Judul) sebelum ia sempat dibina
+  const detectedHeader = layout.adaptive?.header || detectHeaderGroups(pageContent);
+  let headerTopY = detectedHeader?.y0;
+  
+  if (headerTopY == null && layout.grid && layout.grid.rowLines && layout.grid.rowLines.length > 0) {
+      headerTopY = layout.grid.rowLines[0];
+  }
+
+  if (headerTopY != null) {
+    pageContent.words = pageContent.words.filter(w => w.bottom > headerTopY - 4);
+    if (layout.lines) {
+      layout.lines = layout.lines.filter(line => line.bottom > headerTopY - 4);
+    }
+  }
+
   if (layout.mode === "lattice" || layout.mode === "adaptive-lattice") {
     return buildLatticeRows(pageContent, layout);
   }
@@ -1649,7 +1661,6 @@ function buildLatticeRows(pageContent, layout) {
       const wordHeight = Math.max(1, word.bottom - word.top);
       const vOverlap = Math.max(0, Math.min(word.bottom, base.bottom + 1.5) - Math.max(word.top, base.top - 1.5));
 
-      // Toleransi vertikal diperlebar agar teks yang mepet garis border atas/bawah tidak terbuang
       return (
         cx >= columnLines[0] - 2 &&
         cx <= columnLines[columnLines.length - 1] + 2 &&
@@ -1719,7 +1730,6 @@ function buildLatticeRows(pageContent, layout) {
       const spanTop = band.top;
       const spanBottom = bands[r + rowspan - 1].bottom;
 
-      // Filter teks per sel dengan toleransi overlap vertikal
       const parts = pageContent.words.filter(word => {
         const cx = (word.x0 + word.x1) / 2;
         const cy = (word.top + word.bottom) / 2;
@@ -1773,7 +1783,6 @@ function splitBandByStructuralRows(words, band, columns, header = null) {
     const codeLike = /^[A-Z]{0,6}\d[A-Z0-9._\/-]{2,}$/i.test(firstText) ||
       /^[+-]?0\d/.test(firstText);
 
-    // Kriteria baris mandiri tanpa harus selalu bergantung pada angka
     const dataLike = !isHeader && (
       (rightHit && numericCount >= 1 && populated >= Math.min(3, columns.length)) ||
       (populated >= Math.max(3, Math.ceil(columns.length * 0.55)) && aligned >= Math.min(3, columns.length)) ||
@@ -1972,10 +1981,8 @@ function trimOutsideTableLines(lines, columns, header = null) {
 
     const gap = current.top - prev.bottom;
 
-    // Jangan potong baris jika gap vertikal masih wajar
     if (gap < Math.max(14, font * 3.0, typicalGap * 2.2)) continue;
 
-    // Cek apakah teks masih berada dalam batas horizontal tabel
     const isInsideTable = current.words.every(w => w.x0 >= tableX0 - 6 && w.x1 <= tableX1 + 6);
     if (isInsideTable && gap < Math.max(25, font * 4.5)) {
       continue;
@@ -2060,8 +2067,6 @@ function buildStreamRows(pageContent, layout, options) {
     const narrowContinuationShape =
       populatedCount <= Math.max(1, Math.ceil(columns.length * 0.35));
 
-    // Jika baris saat ini dan baris sebelumnya sama-sama mengisi kolom yang sama dengan teks valid,
-    // maka ini adalah baris baru terpisah, bukan sambungan teks (wrap)
     const isSameColumnColliding = previous && draft.cells.some((cell, idx) =>
       Boolean(cell.text && previous.cells[idx]?.text && cell.text.trim().length > 1)
     );
