@@ -173,12 +173,6 @@ function updateOcrUi() {
 $("tableMode").addEventListener("change", updateOcrUi);
 updateOcrUi();
 
-/* Perubahan opsi
-
-   Preview dibangun dari snapshot opsi saat Preview ditekan.
-   Jika opsi berubah setelah Preview, table lama tidak boleh dipakai
-   untuk Download. User harus Preview ulang agar hasil tetap sinkron. */
-
 const optionIds = [
   "tableMode",
   "headerMode",
@@ -246,22 +240,13 @@ $("extractBtn").addEventListener("click", async () => {
       } else {
         content = await readPage(page, pdfjsLib, {
           readRulings: options.mode !== "stream",
-          // Footer/outside-table cleanup is Adaptive-only. Catalog keeps the
-          // exact previous readPage behavior.
           stripTableFooter: options.mode === "adaptive"
         });
       }
 
       if (options.mode === "ocr-adaptive" && !content.words?.length) {
-        const detail = [
-          `output=${content.ocrOutput || "empty"}`,
-          `text=${content.ocrTextLength ?? 0} karakter`,
-          `words=${content.ocrWordCount ?? 0}`
-        ].join(", ");
-
         throw new Error(
-          `OCR selesai tetapi tidak menghasilkan word + koordinat yang dapat dipakai untuk tabel ` +
-          `(${detail}). Coba English terlebih dahulu, lalu cek resolusi OCR dan console browser.`
+          `OCR selesai tetapi tidak menghasilkan word + koordinat yang dapat dipakai untuk tabel.`
         );
       }
 
@@ -310,37 +295,14 @@ $("extractBtn").addEventListener("click", async () => {
       ? ` Confidence struktur: ${Math.round(table.confidence * 100)}%.`
       : "";
 
-    const ocrConfidence = options.mode === "ocr-adaptive"
-      ? pages.map(page => Number(page.ocrConfidence)).filter(Number.isFinite)
-      : [];
-    const ocrConfidenceText = ocrConfidence.length
-      ? ` Confidence OCR rata-rata: ${Math.round(ocrConfidence.reduce((a, b) => a + b, 0) / ocrConfidence.length * 100)}%.`
-      : "";
-
+    // PENGUBAHAN: Jangan hitung leadingRows ke dalam total rows agar konsisten
     const displayedRowCount = options.mode === "catalog" && Array.isArray(table.sheets)
       ? table.sheets.reduce((sum, sheet) =>
-          sum + (sheet.leadingRows?.length || 0) +
-          (sheet.headerRows?.length || 0) +
-          (sheet.rows?.length || 0), 0)
+          sum + (sheet.headerRows?.length || 0) + (sheet.rows?.length || 0), 0)
       : table.rows.length;
 
-    if (options.mode === "catalog" && table.diagnostics) {
-      const d = table.diagnostics;
-      console.debug("[Catalog diagnostics]", d);
-    }
-
-    // Diagnostics Adaptive: tampilkan jalur row-builder per halaman agar
-    // regression rowgap/stream mudah dibedakan tanpa menebak dari hasil Excel.
-    if (options.mode === "adaptive" && table.pageModes?.length) {
-      for (const page of table.pageModes) {
-        console.debug(
-          `[Adaptive layout] page=${page.pageNumber} mode=${page.mode} confidence=${Number.isFinite(page.confidence) ? page.confidence.toFixed(3) : "n/a"}`
-        );
-      }
-    }
-
     setStatus(
-      `Selesai. ${displayedRowCount} baris × ${table.columnCount} kolom dari ${table.pageCount} halaman.${catalogText} Struktur dibaca lewat ${detected}.${confidenceText}${ocrConfidenceText}`,
+      `Selesai. ${displayedRowCount} baris × ${table.columnCount} kolom dari ${table.pageCount} halaman.${catalogText} Struktur dibaca lewat ${detected}.${confidenceText}`,
       "ok"
     );
   } catch (error) {
@@ -373,8 +335,8 @@ function renderPreview(result) {
 
   const body = document.createElement("tbody");
 
+  // PENGUBAHAN: Buang result.leadingRows dari array previewRows
   const previewRows = [
-    ...(result.leadingRows || []),
     ...(result.rows || [])
   ];
 
@@ -384,7 +346,8 @@ function renderPreview(result) {
 
   element.appendChild(body);
 
-  const totalPreviewRows = (result.leadingRows?.length || 0) + (result.rows?.length || 0);
+  // PENGUBAHAN: Total baris yang dihitung hanya result.rows
+  const totalPreviewRows = (result.rows?.length || 0);
   const shown = Math.min(totalPreviewRows, PREVIEW_LIMIT);
   $("rowCount").textContent =
     totalPreviewRows > shown
