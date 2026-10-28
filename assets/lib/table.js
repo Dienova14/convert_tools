@@ -1,19 +1,5 @@
 /* =========================================================
    table.js — menentukan struktur tabel dari satu halaman
-
-   Tiga strategi, dipilih otomatis:
-
-   1. lattice  — border vertikal & horizontal terbaca.
-                 Paling akurat. Merge cell terdeteksi asli
-                 dari ada/tidaknya garis pemisah.
-
-   2. hybrid   — hanya ada garis horizontal (tabel bergaris
-                 baris saja). Baris dari garis, kolom dari
-                 celah spasi.
-
-   3. stream   — tidak ada border sama sekali. Kolom dicari
-                 dari "koridor kosong" vertikal yang bertahan
-                 di sebagian besar baris.
    ========================================================= */
 
 import {
@@ -39,16 +25,24 @@ export function clusterTextLines(words) {
   const lines = [];
 
   for (const word of sorted) {
-    const height = Math.max(1, word.bottom - word.top);
+    const wordHeight = Math.max(1, word.bottom - word.top);
+    const wordCenterY = (word.top + word.bottom) / 2;
     let target = null;
 
-    // cukup cek beberapa baris terakhir; input sudah terurut
-    for (let i = lines.length - 1; i >= Math.max(0, lines.length - 4); i--) {
+    for (let i = lines.length - 1; i >= Math.max(0, lines.length - 5); i--) {
       const line = lines[i];
+      const lineHeight = Math.max(1, line.bottom - line.top);
+      const lineCenterY = (line.top + line.bottom) / 2;
       const shared = overlap(line.top, line.bottom, word.top, word.bottom);
-      const minHeight = Math.min(line.bottom - line.top, height) || 1;
+      const minHeight = Math.min(lineHeight, wordHeight) || 1;
+      const avgHeight = (lineHeight + wordHeight) / 2;
 
-      if (shared / minHeight >= 0.4) {
+      // Evaluasi overlap vertikal DAN jarak titik tengah (Center-Y).
+      // Ini mencegah kata di baris berikutnya tersedot ketika spasi vertikal rapat.
+      const hasOverlap = shared / minHeight >= 0.45;
+      const tightCenterY = Math.abs(wordCenterY - lineCenterY) <= avgHeight * 0.38;
+
+      if (hasOverlap && tightCenterY) {
         target = line;
         break;
       }
@@ -56,6 +50,7 @@ export function clusterTextLines(words) {
 
     if (target) {
       target.words.push(word);
+      // Batasi pemuaian bounding box agar tidak menjalar ke baris berikutnya
       target.top = Math.min(target.top, word.top);
       target.bottom = Math.max(target.bottom, word.bottom);
     } else {
@@ -73,13 +68,6 @@ export function clusterTextLines(words) {
    Deteksi kolom dari celah kosong (tanpa border)
    --------------------------------------------------------- */
 
-/**
- * Proyeksikan semua kata ke sumbu X. Posisi X yang tidak pernah
- * (atau hampir tidak pernah) tertutup teks adalah pemisah kolom.
- *
- * Ini jauh lebih tahan banting dibanding klaster tepi kiri:
- * kolom rata kanan (angka) dan rata tengah ikut terdeteksi benar.
- */
 export function detectColumnBoundaries(lines, options = {}) {
   const usable = lines.filter(line => line.words.length);
   if (usable.length < 2) return null;
@@ -95,8 +83,6 @@ export function detectColumnBoundaries(lines, options = {}) {
   const fontSize = typicalFontSize(words);
   const minGutter = options.minGutter ?? Math.max(3.5, fontSize * 0.55);
 
-  // Baris "judul" yang membentang penuh akan menutup semua celah.
-  // Baris seperti itu dikeluarkan dari perhitungan koridor.
   const bodyLines = usable.filter(line => {
     if (line.words.length > 1) return true;
     const span = line.words[0].x1 - line.words[0].x0;
@@ -146,7 +132,7 @@ export function detectColumnBoundaries(lines, options = {}) {
     const x0 = left + a / scale;
     const x1 = left + b / scale;
 
-    if (x0 <= left + 0.5 || x1 >= right - 0.5) continue; // margin kiri/kanan
+    if (x0 <= left + 0.5 || x1 >= right - 0.5) continue;
     if (x1 - x0 < minGutter) continue;
 
     boundaries.push((x0 + x1) / 2);
@@ -181,19 +167,16 @@ function joinParts(parts) {
   return normalizeText(text);
 }
 
-/**
- * Bagikan kata-kata satu baris ke kolom.
- * Kata yang tumpang tindih ≥2 kolom dianggap merge kesamping (colspan).
- */
 export function assignToColumns(words, columns) {
   const cells = columns.map(() => ({ parts: [], colspan: 1 }));
 
   for (const word of words) {
     const wordWidth = Math.max(0.5, word.x1 - word.x0);
 
+    // Dinaikkan ke 42% agar teks yang menyentuh batas kolom tidak langsung memicu merge kolom horizontal
     const hits = columns
       .map((column, index) => ({ index, shared: overlap(column.x0, column.x1, word.x0, word.x1) }))
-      .filter(hit => hit.shared >= wordWidth * 0.25);
+      .filter(hit => hit.shared >= wordWidth * 0.42);
 
     if (!hits.length) {
       const center = (word.x0 + word.x1) / 2;
@@ -227,24 +210,7 @@ export function assignToColumns(words, columns) {
 }
 
 /* ---------------------------------------------------------
-   Analisis layout satu halaman
-   --------------------------------------------------------- */
-
-
-/* ---------------------------------------------------------
-   Adaptive column detection v1
-
-   Stream lama hanya mencari koridor kosong yang konsisten. Itu cepat,
-   tetapi mudah gagal ketika posisi X antarbaris bergeser atau beberapa
-   kolom hanya muncul pada sebagian baris.
-
-   Adaptive v1 membuat beberapa kandidat batas kolom dari:
-   - gap antar text object,
-   - batas kiri/kanan text object yang berulang,
-   - hasil stream lama,
-   lalu memilih kombinasi batas dengan skor struktur terbaik.
-
-   Tidak memakai AI / server. Semua dihitung lokal di browser.
+   Adaptive column detection helpers
    --------------------------------------------------------- */
 
 const ADAPTIVE_MAX_COLUMNS = 12;
@@ -333,8 +299,6 @@ function adaptiveCandidates(lines, left, right, fontSize) {
     });
   }
 
-  // Bila sebuah kolom rata-kiri/rata-kanan tetapi gap-nya tidak konsisten,
-  // edge X yang berulang tetap memberi kandidat boundary yang berguna.
   for (const cluster of clusterPositions(edgePositions, Math.max(3, fontSize * 0.45))) {
     const support = Math.min(1, cluster.count / Math.max(2, lines.length));
     if (support < 0.12) continue;
@@ -424,15 +388,11 @@ function scoreAdaptiveColumns(lines, columns, candidateMap) {
   }
   numericConsistency /= columns.length;
 
-  // Boundary support: boundary yang sering muncul tepat di whitespace
-  // lebih dipercaya daripada boundary yang hanya muncul sekali.
   const boundarySupport = candidateMap.reduce((sum, candidate) => sum + candidate.support, 0) /
     Math.max(1, candidateMap.length);
 
   const cutPenalty = adaptiveBoundaryPenalty(lines, columns.slice(0, -1).map(column => column.x1));
 
-  // Terlalu banyak kolom biasanya berarti kita memotong nama/deskripsi menjadi
-  // beberapa kolom palsu. Penalti ringan menjaga 4-6 kolom tetap stabil.
   const columnCountPenalty = columns.length > 6 ? (columns.length - 6) * 0.08 : 0;
   const columnCountFit = headerColumnHint
     ? Math.max(0, 1 - Math.abs(columns.length - headerColumnHint) / Math.max(2, headerColumnHint))
@@ -487,8 +447,6 @@ function chooseAdaptiveColumns(lines, candidates, left, right, fontSize) {
 
   if (!best) return null;
 
-  // Normalisasi confidence ke 0..1. Score internal berada kira-kira di
-  // rentang 0..1 setelah seluruh komponen digabung.
   const confidence = Math.max(0, Math.min(1, best.score));
   return { ...best, confidence };
 }
@@ -516,16 +474,9 @@ export function detectAdaptiveColumns(lines, options = {}) {
   return result;
 }
 
-
-
 /* ---------------------------------------------------------
-   Adaptive V1.3 — header + first-data-row gap recovery
-
-   Ada PDF yang border-nya sebenarnya ada, tetapi operator vector-nya
-   tidak selalu berhasil dibaca konsisten oleh pdf.js. Untuk kasus itu,
-   jangan kembali ke satu kolom. Gunakan struktur header + gap terbesar
-   pada baris data pertama sebagai recovery geometry.
-*/
+   Header detection & row-gap recovery
+   --------------------------------------------------------- */
 
 function headerWordScore(word) {
   const text = String(word?.text || "").trim();
@@ -538,18 +489,11 @@ function headerWordScore(word) {
   const bold = /bold|semibold|demi/i.test(String(word?.fontFamily || ""));
 
   let score = 0;
-
-  // Header biasanya berupa label pendek, tetapi jangan mensyaratkan bahasa
-  // tertentu. Ini juga tetap bekerja untuk header numerik seperti tier harga.
   if (letters > 0) score += 1.1;
   if (digits > 0 && letters === 0) score += 0.35;
   if (length <= 35) score += 0.55;
   if (length > 70) score -= 0.8;
-
-  // Nilai data yang terlihat seperti angka panjang diberi penalti kecil.
-  // Jangan terlalu agresif: kolom header bisa saja memang bernama 100/200.
   if (digits >= 4 && letters === 0) score -= 0.8;
-
   if (bold) score += 1.0;
   if (font >= 11) score += 0.15;
 
@@ -580,12 +524,8 @@ function headerLineScore(line, pageWidth) {
   score += words.reduce((sum, w) => sum + headerWordScore(w), 0) / words.length;
   score += boldRatio * 2.5;
 
-  // Header murni numeric masih mungkin, tetapi baris yang hampir seluruhnya
-  // numeric dan tidak punya style/struktur pendukung biasanya adalah data.
   if (numericRatio > 0.75 && boldRatio < 0.25) score -= 2.5;
   if (avgLen > 40) score -= 1.0;
-
-  // Judul panjang yang kebetulan berisi banyak kata jangan dianggap header.
   if (groups.length <= 2 && text.length > 30) score -= 3;
 
   return score;
@@ -628,8 +568,6 @@ function detectHeaderGroups(pageContent) {
       Math.max(6, typicalFontSize(line.words) * 1.25)
     );
 
-    // Cari baris data terdekat setelah kandidat. Header yang benar biasanya
-    // punya jumlah/posisi kolom yang masuk akal terhadap baris berikutnya.
     const next = lines.slice(index + 1, Math.min(lines.length, index + 6));
     let continuationFit = 0;
     let dataEvidence = 0;
@@ -656,12 +594,6 @@ function detectHeaderGroups(pageContent) {
     score += Math.min(2.0, dataEvidence * 0.6);
     score -= index * 0.22;
 
-    // A real data row can look deceptively header-like because catalog rows
-    // contain many words and span almost the whole table. Do not let the
-    // first data row beat the actual label row. A candidate containing a
-    // price-like numeric token is strong evidence that it is body data, not
-    // the header. Keep the penalty conditional so numeric headers remain
-    // possible when they are otherwise strongly styled/structured.
     const candidateNumeric = line.words.filter(w => numericLikeForLayout(w.text));
     const candidateNumericRatio = candidateNumeric.length / Math.max(1, line.words.length);
     const candidateHasPriceLike = candidateNumeric.some(w =>
@@ -674,15 +606,8 @@ function detectHeaderGroups(pageContent) {
     if (candidateHasPriceLike) score -= 5.0;
     else if (candidateNumericRatio >= 0.15 && candidateBoldRatio < 0.35) score -= 3.0;
 
-    // A label row with no numeric tokens and several separated groups is much
-    // more likely to be the real header than a product row. This remains
-    // language-agnostic and avoids hard-coding BRAND/TYPE/etc.
     if (candidateNumeric.length === 0 && groups.length >= 4) score += 3.0;
 
-    // If a candidate is immediately followed by a line with the same broad
-    // structure and the candidate itself has no numeric values, prefer it as
-    // the header boundary. This is particularly important for price-list
-    // PDFs where header and first data row use the same font family.
     if (candidateNumeric.length === 0 && next[0] && continuationFit >= 0.6) {
       score += 1.5;
     }
@@ -699,8 +624,6 @@ function detectHeaderGroups(pageContent) {
     }
   }
 
-  // Threshold konservatif: recovery hanya dipakai bila struktur header cukup
-  // kuat. Jika tidak yakin, adaptive/stream biasa tetap menjadi fallback.
   return best && best.score >= 7.0 ? best : null;
 }
 
@@ -795,8 +718,6 @@ function detectRowGapRecovery(pageContent, options = {}) {
   const right = Math.max(...header.groups.map(g => g.x1), ...first.words.map(w => w.x1));
   const columnLines = [left, ...selected.map(g => g.x), right];
 
-  // Header groups provide a second check: each internal boundary should
-  // lie between the corresponding header groups, not inside a header cell.
   const headerCenters = header.groups.map(g => (g.x0 + g.x1) / 2);
   let headerFit = 0;
   for (let i = 1; i < columnLines.length - 1; i++) {
@@ -821,7 +742,6 @@ function detectRowGapRecovery(pageContent, options = {}) {
     confidence
   };
 }
-
 
 function inferOcrAnchorColumns(pageContent, visualGrid) {
   const words = (pageContent.words || []).filter(word => !word.vertical);
@@ -879,8 +799,6 @@ function inferOcrAnchorColumns(pageContent, visualGrid) {
     for (let i = 0; i <= bins; i++) coverage[i] += marked[i];
   }
 
-  // A real text column appears across multiple data rows. Image-column OCR
-  // noise is usually sparse and therefore falls below this threshold.
   const threshold = Math.max(2, Math.ceil(lines.length * 0.22));
   const runs = [];
   let start = null;
@@ -903,7 +821,6 @@ function inferOcrAnchorColumns(pageContent, visualGrid) {
     }))
     .filter(band => band.x1 - band.x0 >= minBand);
 
-  // Merge nearby fragments belonging to the same physical column.
   const merged = [];
   for (const band of bands) {
     const last = merged[merged.length - 1];
@@ -923,7 +840,6 @@ function inferOcrAnchorColumns(pageContent, visualGrid) {
     internalBoundaries.push((merged[i - 1].x1 + merged[i].x0) / 2);
   }
 
-  // Decide whether a leading/trailing column has little/no OCR text.
   const internalWidths = [];
   for (let i = 1; i < internalBoundaries.length; i++) {
     internalWidths.push(internalBoundaries[i] - internalBoundaries[i - 1]);
@@ -960,7 +876,6 @@ function inferOcrAnchorColumns(pageContent, visualGrid) {
 
   if (columnLines.length < 3 || columnLines.length > 15) return null;
 
-  // Validate that most body words land in exactly one column.
   const columns = boundariesToRanges(columnLines);
   let assigned = 0;
   for (const word of body) {
@@ -982,13 +897,6 @@ function inferOcrAnchorColumns(pageContent, visualGrid) {
   };
 }
 
-
-/**
- * Recovery untuk PDF yang menggambar garis horizontal lengkap tetapi tidak
- * menggambar/membaca garis vertikal internal. Kasus ini sangat umum pada
- * price-list: garis horizontal justru merupakan sumber row boundary yang
- * paling kuat. Jangan jatuh ke anchor/stream bila ruling-nya tersedia.
- */
 function detectHorizontalRowRecovery(pageContent, fontSize) {
   const horizontal = (pageContent.rulings?.horizontal || [])
     .filter(line => Number.isFinite(line.y) && Number.isFinite(line.x0) && Number.isFinite(line.x1))
@@ -1024,8 +932,6 @@ function detectHorizontalRowRecovery(pageContent, fontSize) {
   const typical = median(gaps);
   if (!(typical > 0)) return null;
 
-  // Prevent decorative/title lines from being mistaken for a dense row grid.
-  // A real table grid has a repeated vertical pitch; allow moderate variation.
   const regular = gaps.filter(g => g >= typical * 0.45 && g <= typical * 1.8).length / Math.max(1, gaps.length);
   if (regular < 0.65) return null;
 
@@ -1035,6 +941,10 @@ function detectHorizontalRowRecovery(pageContent, fontSize) {
     confidence: Math.min(0.98, 0.72 + strong * 0.16 + regular * 0.10)
   };
 }
+
+/* ---------------------------------------------------------
+   Analisis layout satu halaman
+   --------------------------------------------------------- */
 
 export function analyzePage(pageContent, options = {}) {
   const lines = clusterTextLines(pageContent.words);
@@ -1046,19 +956,10 @@ export function analyzePage(pageContent, options = {}) {
   const forced = options.mode && options.mode !== "auto" ? options.mode : null;
   const fontSize = typicalFontSize(pageContent.words);
 
-  // OCR Adaptive has its own geometry bridge. It uses the rendered-image
-  // rulings plus repeated OCR word positions, then feeds the result into the
-  // same buildRows/resolveHeader/document pipeline. Normal PDF-text Adaptive
-  // never enters this branch.
   if (pageContent.ocr && forced === "adaptive") {
-    const visualColumns = (pageContent.visualGrid?.columnLines || [])
-      .filter(Number.isFinite);
-    const visualRows = (pageContent.visualGrid?.rowLines || [])
-      .filter(Number.isFinite);
+    const visualColumns = (pageContent.visualGrid?.columnLines || []).filter(Number.isFinite);
+    const visualRows = (pageContent.visualGrid?.rowLines || []).filter(Number.isFinite);
 
-    // OCR Adaptive v0.6 is grid-first: when the rendered image exposes a
-    // coherent table grid, use it directly. This preserves empty/image-only
-    // columns and prevents OCR word positions from inventing columns.
     if (visualColumns.length >= 4 && visualRows.length >= 4) {
       const columns = boundariesToRanges(visualColumns);
       const rowSeparators = visualRows;
@@ -1072,15 +973,9 @@ export function analyzePage(pageContent, options = {}) {
           columnLines: visualColumns,
           rowLines: rowSeparators,
           columns,
-          confidence: Math.min(
-            0.99,
-            Number(pageContent.visualGridConfidence) || 0.86
-          )
+          confidence: Math.min(0.99, Number(pageContent.visualGridConfidence) || 0.86)
         },
-        confidence: Math.min(
-          0.99,
-          Number(pageContent.visualGridConfidence) || 0.86
-        ),
+        confidence: Math.min(0.99, Number(pageContent.visualGridConfidence) || 0.86),
         adaptive: {
           source: "ocr-visual-grid",
           columns,
@@ -1091,7 +986,6 @@ export function analyzePage(pageContent, options = {}) {
       };
     }
 
-    // Fallback only when the visual grid is not strong enough.
     const ocrLayout = inferOcrAnchorColumns(pageContent, {
       horizontal: pageContent.rulings?.horizontal || [],
       vertical: pageContent.rulings?.vertical || []
@@ -1118,9 +1012,6 @@ export function analyzePage(pageContent, options = {}) {
   const grid = forced === "stream" ? null : findGrid(pageContent, fontSize);
   const rulingGrid = forced === "stream" ? null : findVerticalGrid(pageContent, fontSize);
 
-  // Jika dua detektor menemukan grid, pilih struktur yang lebih informatif.
-  // Fallback vertikal sering menemukan satu boundary yang terputus yang
-  // terlewat oleh findGrid, sehingga jumlah kolomnya bisa lebih lengkap.
   let verticalGrid = grid || rulingGrid;
   if (grid && rulingGrid) {
     const moreColumns = rulingGrid.columnLines.length > grid.columnLines.length;
@@ -1144,25 +1035,13 @@ export function analyzePage(pageContent, options = {}) {
   const rowGap = detectRowGapRecovery(pageContent, options);
   const horizontalRows = detectHorizontalRowRecovery(pageContent, fontSize);
 
-  // Bila adaptive berbasis whitespace menghasilkan jumlah kolom yang jauh
-  // lebih sedikit daripada struktur header + first-row gap, pilih recovery
-  // tersebut. Ini adalah kasus khas PDF Bosch: teks masih punya X/Y yang
-  // benar, tetapi border/operator vector tidak terbaca konsisten.
   const rowGapPreferred = rowGap && (
     !adaptive ||
     rowGap.columns.length > adaptive.columns.length + 1 ||
     rowGap.confidence > adaptive.confidence + 0.05
   );
 
-  // Auto: pakai stream lama bila cukup baik. Bila gagal atau adaptive jauh
-  // lebih yakin, adaptive mengambil alih. Ini menjaga kompatibilitas layout
-  // lama sambil memperbaiki PDF yang koordinatnya tidak konsisten.
   if (forced === "adaptive") {
-    // Adaptive harus tetap memanfaatkan informasi paling kuat yang tersedia.
-    // Jika PDF memiliki grid/border yang valid, gunakan grid tersebut sebagai
-    // kandidat struktur utama. Ini mencegah tabel 8 kolom seperti
-    // "No | Pelumas | Qty | X | Size | Kemasan | Harga Botol | Harga Dos/End User"
-    // runtuh menjadi 3-4 kolom hanya karena gap teks tidak konsisten.
     if (verticalGrid && verticalGrid.columnLines.length >= 3 && verticalGrid.rowLines.length >= 3 && verticalGrid.confidence >= 0.55) {
       return {
         mode: "adaptive-lattice",
@@ -1175,9 +1054,6 @@ export function analyzePage(pageContent, options = {}) {
       };
     }
 
-    // Garis vertikal kuat tetapi horizontal tidak cukup: kolom tetap valid,
-    // baris dibangun dari text lines + anchor column. Ini menangani tabel
-    // dengan description multi-line seperti Horn/Oil Filter/Solar Filter.
     if (verticalGrid && verticalGrid.columnLines.length >= 3 && verticalGrid.confidence >= 0.55) {
       return {
         mode: "ruling-stream",
@@ -1297,15 +1173,6 @@ export function analyzePage(pageContent, options = {}) {
   return { mode: "none", lines, columns: null, rowSeparators: null, confidence: 0 };
 }
 
-
-/**
- * Fallback grid berbasis garis vertikal.
- *
- * Beberapa PDF mempunyai border vertikal yang sangat jelas, tetapi garis
- * horizontalnya sedikit/terputus (mis. tabel dengan cell description tinggi).
- * Dalam kondisi itu, kolom sebenarnya masih bisa diketahui dari coverage
- * garis vertikal. Baris kemudian dibangun dari text lines.
- */
 function findVerticalGrid(pageContent, fontSize) {
   const { rulings, words } = pageContent;
   const vertical = rulings?.vertical || [];
@@ -1369,7 +1236,6 @@ function findVerticalGrid(pageContent, fontSize) {
   const columnLines = cluster1D(candidates.map(c => c.x), Math.max(3, fontSize * 0.28));
   if (columnLines.length < 3) return null;
 
-  // Buang garis dekoratif yang berada jauh di luar text/table body.
   const bounded = columnLines.filter(x => x >= left - 6 && x <= right + 6);
   if (bounded.length < 3) return null;
 
@@ -1404,9 +1270,6 @@ function findGrid(pageContent, fontSize) {
   const minVertical = fontSize * 1.2;
   const minHorizontal = fontSize * 2;
 
-  // Cari dulu garis horizontal yang benar-benar membentuk badan tabel.
-  // Garis dari header/footer atau elemen dekoratif lain tidak boleh ikut
-  // menentukan kolom.
   const horizontalCandidates = rulings.horizontal.filter(
     line => line.x1 - line.x0 >= minHorizontal
   );
@@ -1419,18 +1282,9 @@ function findGrid(pageContent, fontSize) {
   const bottom = rowLines[rowLines.length - 1];
   const tableHeight = Math.max(1, bottom - top);
 
-  // Ambil batas kiri/kanan dari garis horizontal terluar. Ini membuat
-  // filter vertical tidak bergantung pada teks, sehingga tabel yang
-  // kolomnya kosong sebagian tetap bisa dikenali.
   const left = Math.min(...horizontalCandidates.map(l => l.x0));
   const right = Math.max(...horizontalCandidates.map(l => l.x1));
-  const tableWidth = Math.max(1, right - left);
 
-  // Garis vertikal pada PDF nyata sering terpecah menjadi beberapa
-  // segment karena ada merge/header/section. Jangan menilai setiap segment
-  // secara terpisah. Gabungkan coverage pada X yang sama terlebih dahulu.
-  // Contoh Prabawa: garis pemisah NO | PELUMAS terputus di beberapa
-  // section, tetapi secara keseluruhan tetap merupakan boundary kolom.
   const rawVertical = rulings.vertical.filter(line =>
     line.y1 - line.y0 >= minVertical &&
     line.x >= left - 4 &&
@@ -1476,19 +1330,12 @@ function findGrid(pageContent, fontSize) {
   }
 
   const columnLines = cluster1D(verticalCandidates.map(l => l.x), 3);
-
-  // Bila border vertikal tidak cukup lengkap, biarkan mode hybrid/stream
-  // mengambil alih. Jangan memaksakan lattice pada layout yang ambigu.
   if (columnLines.length < 3) return null;
 
   const finalLeft = columnLines[0];
   const finalRight = columnLines[columnLines.length - 1];
   if (finalRight - finalLeft < Math.max(20, fontSize * 5)) return null;
 
-  // Validasi isi grid. Layout yang salah sering menghasilkan satu kolom
-  // raksasa atau batas-batas yang tidak berhubungan dengan teks. Setiap
-  // kolom yang benar tidak harus terisi di setiap baris (merge/blank cell
-  // sah), tetapi mayoritas kolom harus mendapat teks.
   const columns = boundariesToRanges(columnLines);
   const columnHits = new Array(columns.length).fill(0);
   let inside = 0;
@@ -1517,12 +1364,8 @@ function findGrid(pageContent, fontSize) {
   const occupiedColumns = columnHits.filter(count => count > 0).length;
   const occupancyRatio = occupiedColumns / columns.length;
 
-  // Tabel dengan merge vertikal/horizontal masih biasanya menyentuh
-  // sebagian besar kolom. Threshold rendah menjaga tabel sparse tetap
-  // lolos, tetapi mencegah border dekoratif dipilih sebagai lattice.
   if (columns.length >= 3 && occupancyRatio < 0.5) return null;
 
-  // Pastikan garis horizontal juga berada di rentang tabel yang sama.
   const relevantRows = rowLines.filter(y => y >= top - 3 && y <= bottom + 3);
   if (relevantRows.length < 3) return null;
 
@@ -1538,14 +1381,11 @@ function findGrid(pageContent, fontSize) {
    Membangun baris tabel
    --------------------------------------------------------- */
 
-
 export function detectNumericRowAnchors(pageContent, columns = null, header = null) {
   const words = pageContent.words || [];
   const width = pageContent.width || 595;
   if (!words.length) return [];
 
-  // Pakai line clustering yang sama dengan builder. Map berdasarkan center-Y
-  // terlalu rapuh ketika item PDF dalam satu baris punya baseline sedikit beda.
   const lines = clusterTextLines(words);
   const headerCenters = (header?.groups || []).map(g => (g.x0 + g.x1) / 2);
 
@@ -1575,8 +1415,6 @@ export function detectNumericRowAnchors(pageContent, columns = null, header = nu
     };
   });
 
-  // Anchor kuat = aturan lama + bukti bahwa baris benar-benar mengikuti
-  // geometri kolom/header. Ini mencegah footer numerik menjadi anchor.
   const headerBottom = header?.y1 ?? null;
   const bodyRows = headerBottom != null
     ? rowInfo.filter(row => row.y > headerBottom + 0.75)
@@ -1588,9 +1426,6 @@ export function detectNumericRowAnchors(pageContent, columns = null, header = nu
       row.right >= width * 0.62 &&
       (!columns?.length || row.aligned >= Math.min(2, columns.length - 1))
     ) ||
-    // Some catalogs use an alphanumeric code that is not classified as a
-    // numeric token. Two real numeric fields plus a populated first field and
-    // broad column alignment is still a strong data-row signal.
     (
       columns?.length &&
       row.firstFilled &&
@@ -1600,10 +1435,6 @@ export function detectNumericRowAnchors(pageContent, columns = null, header = nu
     )
   );
 
-  // Anchor lemah = baris data yang sah tetapi tidak punya 3 angka, misalnya
-  // qty/stok kosong atau "Rp 12.000" terpecah menjadi beberapa token.
-  // Baris continuation deskripsi biasanya hanya mengisi satu cell sehingga
-  // tidak lolos syarat kedua.
   for (const row of bodyRows) {
     const strong = candidates.includes(row);
     if (strong) continue;
@@ -1619,9 +1450,6 @@ export function detectNumericRowAnchors(pageContent, columns = null, header = nu
 
   candidates.sort((a, b) => a.y - b.y);
 
-  // Deteksi awal footer/konten luar tabel dari bawah ke atas. Tidak bergantung
-  // pada ruling. Hanya memotong setelah ada gap besar dari anchor data terakhir
-  // dan blok sesudahnya tidak lagi cocok dengan kolom/header.
   const anchorGaps = [];
   for (let i = 1; i < candidates.length; i++) {
     const gap = candidates[i].y - candidates[i - 1].y;
@@ -1634,12 +1462,13 @@ export function detectNumericRowAnchors(pageContent, columns = null, header = nu
     -1
   );
 
+  // Dilonggarkan agar baris terakhir tabel tidak terpotong sebagai footer
   if (lastStrongIndex >= 0 && Number.isFinite(typicalAnchorGap) && typicalAnchorGap > 0) {
     const lastStrong = candidates[lastStrongIndex];
     const cutoff = bodyRows.find(row => {
       if (row.y <= lastStrong.y + Math.max(4, font * 0.6)) return false;
       const gap = row.y - lastStrong.y;
-      if (gap < Math.max(font * 2.4, typicalAnchorGap * 2.2, 10)) return false;
+      if (gap < Math.max(font * 3.2, typicalAnchorGap * 3.0, 18)) return false;
 
       const firstText = normalizeText(row.cells?.[0]?.text || "");
       const codeLike = /^[A-Z]{0,6}\d[A-Z0-9._\/-]{2,}$/i.test(firstText) ||
@@ -1649,10 +1478,6 @@ export function detectNumericRowAnchors(pageContent, columns = null, header = nu
         Math.ceil((headerCenters.length || columns?.length || 3) * 0.5)
       );
 
-      // A post-table note such as "Telp ... Total ..." can start in the
-      // leftmost area and contain numbers, so firstFilled alone must not
-      // protect it. A real data row should either align to enough known
-      // columns or have a code-like first field.
       const lowFit =
         row.aligned < alignmentThreshold &&
         (!row.firstFilled || !codeLike);
@@ -1670,8 +1495,6 @@ export function detectNumericRowAnchors(pageContent, columns = null, header = nu
     }
   }
 
-  // Satukan anchor yang sangat dekat (mis. beberapa angka pada satu row
-  // tetapi PDF membaginya ke baseline berbeda).
   const merged = [];
   for (const a of candidates) {
     const prev = merged[merged.length - 1];
@@ -1687,12 +1510,6 @@ export function detectNumericRowAnchors(pageContent, columns = null, header = nu
   return merged;
 }
 
-/**
- * Recover physical rows for price-list/catalog pages whose PDF text already
- * contains one complete product per text line. This runs before anchor bands,
- * so a missing first horizontal/anchor separator cannot swallow header +
- * DN50 + DN65 into the first exported row.
- */
 function buildPriceListPhysicalRows(pageContent, columns, header) {
   if (!columns?.length || !header) return null;
   const words = pageContent.words || [];
@@ -1705,7 +1522,7 @@ function buildPriceListPhysicalRows(pageContent, columns, header) {
 
   const rightColumn = columns[columns.length - 1];
   const firstHeader = normalizeText(header.groups?.[0]?.words?.map(w => w.text).join(" ") || "");
-  const firstHeaderWord = firstHeader.split(/\\s+/)[0] || "";
+  const firstHeaderWord = firstHeader.split(/\s+/)[0] || "";
 
   const info = body.map(line => {
     const cells = assignToColumns(line.words, columns);
@@ -1718,24 +1535,20 @@ function buildPriceListPhysicalRows(pageContent, columns, header) {
     const span = Math.max(...line.words.map(w => w.x1)) - Math.min(...line.words.map(w => w.x0));
     const firstText = normalizeText(cells[0]?.text || "");
     const startsLikeProduct = firstHeaderWord
-      ? firstText.split(/\\s+/)[0] === firstHeaderWord
+      ? firstText.split(/\s+/)[0] === firstHeaderWord
       : populated >= Math.min(3, columns.length);
     const priceLike = numeric.some(w =>
-      /^\\d{1,3}(?:[.,]\\d{3})+(?:[.,]\\d+)?$/.test(String(w.text || "").replace(/\\s+/g, ""))
+      /^\d{1,3}(?:[.,]\d{3})+(?:[.,]\d+)?$/.test(String(w.text || "").replace(/\s+/g, ""))
     );
     return { line, cells, populated, numericCount: numeric.length, rightHit, span, startsLikeProduct, priceLike };
   });
 
-  // Need multiple consecutive product-like lines. This prevents footer notes
-  // containing numbers from activating the recovery.
   const candidates = info.filter(x =>
     x.startsLikeProduct && x.populated >= Math.min(3, columns.length) &&
     x.rightHit && x.priceLike && x.span >= (pageContent.width || 595) * 0.45
   );
   if (candidates.length < 2) return null;
 
-  // Only activate when the first candidate begins close to the header. If the
-  // first product is far below it, normal adaptive row-gap may be intentional.
   const first = candidates[0];
   if (first.line.top - headerBottom > Math.max(45, typicalFontSize(words) * 8)) return null;
 
@@ -1743,16 +1556,11 @@ function buildPriceListPhysicalRows(pageContent, columns, header) {
     makeRow(item.cells, item.line.top, item.line.bottom, item.line.words)
   );
 
-  // Preserve ordering and reject suspicious duplicate-Y candidates.
   rows.sort((a, b) => a.top - b.top);
   return rows.filter((row, i) => i === 0 || row.top - rows[i - 1].top > 1.5);
 }
 
 function buildAdaptiveRowGapRows(pageContent, layout) {
-  // Price-list guard: when the first ruling/anchor is ambiguous, do not let
-  // the header and the first two physical product lines fall into one large
-  // anchor band. RISER is a representative case: each product is a single
-  // PDF text line and the price is present on every line.
   const header = layout.adaptive?.header || detectHeaderGroups(pageContent);
   const priceListRows = buildPriceListPhysicalRows(pageContent, layout.columns, header);
   if (priceListRows && priceListRows.length >= 2) return priceListRows;
@@ -1832,21 +1640,20 @@ function buildLatticeRows(pageContent, layout) {
   const rowLines = grid.rowLines;
   const columnLines = grid.columnLines;
 
-  // Ruling detection can miss thin/colored horizontal rules. In that case a
-  // single lattice band may contain several real text rows. Split such a band
-  // from the text geometry before doing any rowspan inference. This is safer
-  // than treating a missing rule as a rowspan.
   const bands = [];
   for (let i = 0; i < rowLines.length - 1; i++) {
     const base = { top: rowLines[i], bottom: rowLines[i + 1] };
     const words = pageContent.words.filter(word => {
       const cx = (word.x0 + word.x1) / 2;
       const cy = (word.top + word.bottom) / 2;
+      const wordHeight = Math.max(1, word.bottom - word.top);
+      const vOverlap = Math.max(0, Math.min(word.bottom, base.bottom + 1.5) - Math.max(word.top, base.top - 1.5));
+
+      // Toleransi vertikal diperlebar agar teks yang mepet garis border atas/bawah tidak terbuang
       return (
         cx >= columnLines[0] - 2 &&
         cx <= columnLines[columnLines.length - 1] + 2 &&
-        cy > base.top + 1 &&
-        cy < base.bottom - 1
+        ((vOverlap / wordHeight) >= 0.40 || (cy >= base.top - 1.5 && cy <= base.bottom + 1.5))
       );
     });
 
@@ -1869,7 +1676,6 @@ function buildLatticeRows(pageContent, layout) {
     for (let c = 0; c < columns.length; c++) {
       if (taken[r][c]) continue;
 
-      // Merge kesamping: tidak ada garis vertikal pemisah di band ini.
       let colspan = 1;
       while (
         c + colspan < columns.length &&
@@ -1881,17 +1687,10 @@ function buildLatticeRows(pageContent, layout) {
       const spanLeft = columns[c].x0;
       const spanRight = columns[c + colspan - 1].x1;
 
-      // Merge ke bawah hanya jika TIDAK ada garis horizontal DAN
-      // TIDAK ada teks lain pada rentang kolom tersebut di band berikutnya.
-      //
-      // Guard kedua penting untuk PDF katalog yang garis horizontalnya
-      // kadang gagal terbaca. Tanpa guard ini, buildLatticeRows mengira
-      // beberapa baris data sebagai rowspan dan joinParts() menelan nilai
-      // baris-baris berikutnya ke cell pertama.
       let rowspan = 1;
       while (r + rowspan < bands.length) {
         const separatorY = rowLines[r + rowspan];
-        if (hasHorizontalLine(rulings, separatorY, spanLeft + 1, spanRight - 1)) {
+        if (hasHorizontalLine(rulings, separatorY, spanLeft + 1, spanRight - 1, 3.5, 0.45)) {
           break;
         }
 
@@ -1907,8 +1706,6 @@ function buildLatticeRows(pageContent, layout) {
           );
         });
 
-        // Jika ada teks pada kolom/span yang sama, itu adalah row data
-        // tersendiri. Jangan pernah menyatukannya sebagai rowspan.
         if (hasTextInSpan) break;
         rowspan++;
       }
@@ -1922,10 +1719,18 @@ function buildLatticeRows(pageContent, layout) {
       const spanTop = band.top;
       const spanBottom = bands[r + rowspan - 1].bottom;
 
+      // Filter teks per sel dengan toleransi overlap vertikal
       const parts = pageContent.words.filter(word => {
         const cx = (word.x0 + word.x1) / 2;
         const cy = (word.top + word.bottom) / 2;
-        return cx >= spanLeft && cx <= spanRight && cy >= spanTop && cy <= spanBottom;
+        const wordHeight = Math.max(1, word.bottom - word.top);
+        const vOverlap = Math.max(0, Math.min(word.bottom, spanBottom + 1.5) - Math.max(word.top, spanTop - 1.5));
+
+        return (
+          cx >= spanLeft - 1 &&
+          cx <= spanRight + 1 &&
+          ((vOverlap / wordHeight) >= 0.40 || (cy >= spanTop - 1.5 && cy <= spanBottom + 1.5))
+        );
       });
 
       cells[c] = { text: joinParts(parts), colspan, rowspan, parts };
@@ -1937,18 +1742,6 @@ function buildLatticeRows(pageContent, layout) {
   return rows.filter(row => row.cells.some(cell => cell && cell.text));
 }
 
-
-
-/**
- * Pecah satu band ruling menjadi baris struktural berdasarkan text-line.
- *
- * Kasus penting: ruling horizontal awal/antara baris bisa hilang atau tidak
- * terbaca konsisten. Band kemudian dapat berisi HEADER + beberapa data row.
- * Jika kita langsung assign seluruh band, joinParts() akan menelan semua line
- * menjadi satu cell. Fungsi ini memisahkan header dan data terlebih dahulu,
- * tetapi TIDAK memecah wrapped description yang hanya menghasilkan satu
- * kandidat data.
- */
 function splitBandByStructuralRows(words, band, columns, header = null) {
   if (!words.length || columns.length < 2) return [band];
 
@@ -1980,13 +1773,12 @@ function splitBandByStructuralRows(words, band, columns, header = null) {
     const codeLike = /^[A-Z]{0,6}\d[A-Z0-9._\/-]{2,}$/i.test(firstText) ||
       /^[+-]?0\d/.test(firstText);
 
-    // Price-list data row: reaches the rightmost column and has numeric data.
-    // The fallback allows blank price/qty rows as long as several known
-    // columns are occupied and their centers align with the schema.
+    // Kriteria baris mandiri tanpa harus selalu bergantung pada angka
     const dataLike = !isHeader && (
       (rightHit && numericCount >= 1 && populated >= Math.min(3, columns.length)) ||
       (populated >= Math.max(3, Math.ceil(columns.length * 0.55)) && aligned >= Math.min(3, columns.length)) ||
-      (codeLike && populated >= Math.min(2, columns.length) && aligned >= 2)
+      (codeLike && populated >= Math.min(2, columns.length) && aligned >= 2) ||
+      (populated >= 2 && line.words.length >= 2 && aligned >= 2)
     );
 
     return {
@@ -2007,12 +1799,8 @@ function splitBandByStructuralRows(words, band, columns, header = null) {
   const data = lineInfo.filter(item => item.dataLike).sort((a, b) => a.cy - b.cy);
   const headerLine = lineInfo.find(item => item.isHeader);
 
-  // Tidak ada cukup bukti bahwa satu band mengandung beberapa row nyata.
   if (data.length < 2 && !headerLine) return [band];
 
-  // Jika header berada di band yang sama dengan data, header harus mendapat
-  // band sendiri. Ini adalah akar kasus RISER: header + DN50 + DN65 berada
-  // dalam satu band ketika ruling 126/141 gagal terbaca.
   const result = [];
   const orderedData = data;
   const cutGap = Math.max(2, font * 0.35);
@@ -2023,7 +1811,6 @@ function splitBandByStructuralRows(words, band, columns, header = null) {
       const cut = (headerLine.cy + firstData.cy) / 2;
       if (cut > band.top + 1 && cut < band.bottom - 1) {
         result.push({ top: band.top, bottom: cut, _structural: "header" });
-        // Data rows continue below this cut.
         const dataTop = cut;
         for (let i = 0; i < orderedData.length; i++) {
           const current = orderedData[i];
@@ -2038,8 +1825,6 @@ function splitBandByStructuralRows(words, band, columns, header = null) {
     }
   }
 
-  // Tanpa header di band: split hanya bila ada >=2 data lines. Wrapped text
-  // tetap aman karena satu line saja tidak memicu pemecahan.
   if (orderedData.length >= 2) {
     for (let i = 0; i < orderedData.length; i++) {
       const current = orderedData[i];
@@ -2055,7 +1840,7 @@ function splitBandByStructuralRows(words, band, columns, header = null) {
   return [band];
 }
 
-function splitLatticeBandByDataLines(words, band, columns) {
+export function splitLatticeBandByDataLines(words, band, columns) {
   if (!words.length || columns.length < 2) return [band];
 
   const lines = clusterTextLines(words);
@@ -2077,22 +1862,16 @@ function splitLatticeBandByDataLines(words, band, columns) {
       line.words.some(word => center >= word.x0 - 8 && center <= word.x1 + 8)
     ).length;
 
-    // A wrapped description line normally has no rightmost value and touches
-    // only one/few columns. A real price-list row normally reaches the right
-    // edge and has at least one numeric field. The second condition covers
-    // rows where the price/qty is empty but the row still occupies several
-    // known columns.
     const dataLike =
       (rightHit && numericCount >= 1 && populated >= Math.min(3, columns.length)) ||
-      (rightHit && populated >= Math.max(3, Math.ceil(columns.length * 0.55)) && aligned >= 3);
+      (rightHit && populated >= Math.max(3, Math.ceil(columns.length * 0.55)) && aligned >= 3) ||
+      (populated >= 2 && aligned >= 2);
 
     return dataLike;
   });
 
   if (candidates.length < 2) return [band];
 
-  // Only split when the candidate baselines are plausibly separate rows.
-  // This avoids turning tightly wrapped text into fake rows.
   const minGap = Math.max(3, font * 0.55);
   const ordered = candidates
     .map(line => ({ line, y: (line.top + line.bottom) / 2 }))
@@ -2102,8 +1881,6 @@ function splitLatticeBandByDataLines(words, band, columns) {
   for (const item of ordered) {
     const prev = distinct[distinct.length - 1];
     if (prev && item.y - prev.y < minGap) {
-      // Keep the line with stronger data evidence; normally this branch only
-      // handles duplicate baseline fragments from the same PDF text row.
       continue;
     }
     distinct.push(item);
@@ -2127,7 +1904,6 @@ function splitLatticeBandByDataLines(words, band, columns) {
   return result.length >= 2 ? result : [band];
 }
 
-/** Hanya garis horizontal: baris dari garis, kolom dari celah spasi. */
 function buildBandedRows(pageContent, layout) {
   const separators = layout.rowSeparators;
   const rows = [];
@@ -2169,12 +1945,6 @@ function buildBandedRows(pageContent, layout) {
   return rows;
 }
 
-/**
- * Buang blok konten setelah tabel tanpa mengandalkan border.
- * Prinsipnya konservatif: harus ada baris data sebelumnya, gap vertikal yang
- * jauh lebih besar dari leading normal, lalu baris berikutnya punya kecocokan
- * rendah dengan kolom/header yang sudah diketahui.
- */
 function trimOutsideTableLines(lines, columns, header = null) {
   if (!lines?.length || !columns?.length) return lines;
 
@@ -2190,10 +1960,10 @@ function trimOutsideTableLines(lines, columns, header = null) {
   const typicalGap = median(gaps);
   if (!Number.isFinite(typicalGap)) return lines;
 
-  // Cari kandidat cutoff hanya di lower half agar judul/header atau section
-  // di atas tabel tidak tersentuh.
   const font = typicalFontSize(ordered.flatMap(line => line.words));
   const dataStart = ordered[Math.floor(ordered.length * 0.2)]?.top ?? 0;
+  const tableX0 = columns[0].x0;
+  const tableX1 = columns[columns.length - 1].x1;
 
   for (let i = 1; i < ordered.length; i++) {
     const prev = ordered[i - 1];
@@ -2201,7 +1971,15 @@ function trimOutsideTableLines(lines, columns, header = null) {
     if (current.top < dataStart) continue;
 
     const gap = current.top - prev.bottom;
-    if (gap < Math.max(10, font * 2.4, typicalGap * 2.2)) continue;
+
+    // Jangan potong baris jika gap vertikal masih wajar
+    if (gap < Math.max(14, font * 3.0, typicalGap * 2.2)) continue;
+
+    // Cek apakah teks masih berada dalam batas horizontal tabel
+    const isInsideTable = current.words.every(w => w.x0 >= tableX0 - 6 && w.x1 <= tableX1 + 6);
+    if (isInsideTable && gap < Math.max(25, font * 4.5)) {
+      continue;
+    }
 
     const cells = assignToColumns(current.words, columns);
     const populated = cells.filter(cell => cell?.text).length;
@@ -2212,8 +1990,6 @@ function trimOutsideTableLines(lines, columns, header = null) {
         ).length
       : populated;
 
-    // Konten luar tabel biasanya tidak mengisi struktur kolom. Jangan buang
-    // blok yang masih terlihat seperti baris data.
     const firstText = normalizeText(cells[0]?.text || "");
     const codeLike = /^[A-Z]{0,6}\d[A-Z0-9._\/-]{2,}$/i.test(firstText) ||
       /^[+-]?0\d/.test(firstText);
@@ -2234,7 +2010,6 @@ function trimOutsideTableLines(lines, columns, header = null) {
   return lines;
 }
 
-/** Tanpa border: baris dari jarak vertikal + kolom jangkar. */
 function buildStreamRows(pageContent, layout, options) {
   const { columns, lines } = layout;
 
@@ -2250,8 +2025,6 @@ function buildStreamRows(pageContent, layout, options) {
 
   if (!drafts.length) return [];
 
-  // Kolom jangkar = kolom yang hampir selalu terisi (mis. nomor / kode).
-  // Baris lanjutan (teks yang wrap) pasti kosong di kolom ini.
   const fillRatio = columns.map(
     (_, index) => drafts.filter(d => d.cells[index].text).length / drafts.length
   );
@@ -2275,12 +2048,7 @@ function buildStreamRows(pageContent, layout, options) {
     const previous = rows[rows.length - 1];
     const gap = previous ? draft.top - previous.bottom : Infinity;
 
-    // Dua tanda bahwa sebuah baris teks sebenarnya lanjutan sel di atasnya:
-    //
-    // 1. jaraknya lebih rapat dari jarak antar baris tabel (leading di dalam sel)
-    // 2. kolom penanda baris (kolom kiri yang hampir selalu terisi) kosong
     const emptyAnchors = anchors.filter(index => !draft.cells[index].text).length;
-
     const tighter = Number.isFinite(gap) && typicalGap > 0 && gap <= typicalGap * 0.7;
 
     const sparse =
@@ -2292,9 +2060,16 @@ function buildStreamRows(pageContent, layout, options) {
     const narrowContinuationShape =
       populatedCount <= Math.max(1, Math.ceil(columns.length * 0.35));
 
-    const isContinuation =
+    // Jika baris saat ini dan baris sebelumnya sama-sama mengisi kolom yang sama dengan teks valid,
+    // maka ini adalah baris baru terpisah, bukan sambungan teks (wrap)
+    const isSameColumnColliding = previous && draft.cells.some((cell, idx) =>
+      Boolean(cell.text && previous.cells[idx]?.text && cell.text.trim().length > 1)
+    );
+
+    let isContinuation =
       joinWrapped &&
       previous &&
+      !isSameColumnColliding &&
       anchors.length > 0 &&
       gap <= Math.max(typicalGap * 1.8, 3) &&
       tighter &&
@@ -2340,11 +2115,10 @@ function isBoldRow(words) {
   return bold / words.length >= 0.5;
 }
 
-
 export function inferOcrColumnModelForTest(pageContent, visualGrid = null) {
   return inferOcrAnchorColumns(pageContent, visualGrid);
 }
 
-
-
-export function detectHorizontalRowRecoveryForTest(pageContent, fontSize = typicalFontSize(pageContent.words || [])) { return detectHorizontalRowRecovery(pageContent, fontSize); }
+export function detectHorizontalRowRecoveryForTest(pageContent, fontSize = typicalFontSize(pageContent.words || [])) {
+  return detectHorizontalRowRecovery(pageContent, fontSize);
+}
